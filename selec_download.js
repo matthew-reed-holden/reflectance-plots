@@ -1,43 +1,48 @@
-function create_source(groups, rnds){
-	const group_num = groups.length;
-	let columns = [];
-	let idxOfRnds = [];
-	let idx = 0;
-	for(let i = 0; i < group_num; i++){
-		for(let j = 0; j < groups[i].active.length; j++){
-			columns.push(groups[i].labels[groups[i].active[j]])
-			idxOfRnds.push(groups[i].active[j] + idx)
-		}
-		idx += groups[i].labels.length
-	}
-	const lines = [columns.join(',')]
-	for(let m = 0; m < 2251; m++){
-		let row = [];
-		for(let k = 0; k < idxOfRnds.length; k++){
-			if(rnds[idxOfRnds[k]].data_source.data[rnds[idxOfRnds[k]].name][m] > -1){
-				row.push(rnds[idxOfRnds[k]].data_source.data[rnds[idxOfRnds[k]].name][m].toString())
-			}else{
-				row.push("No Data")
-			}
-		}
-		lines.push(row.join(','))
-		console.log(lines)
-	}
-	return lines.join('\n').concat('\n')
+function createSelectedCsv(groups, rnds) {
+    const columns = [];
+    const rndIndices = [];
+    let idx = 0;
+
+    for (const group of groups) {
+        for (const activeIdx of group.active) {
+            columns.push(group.labels[activeIdx]);
+            rndIndices.push(activeIdx + idx);
+        }
+        idx += group.labels.length;
+    }
+
+    if (columns.length === 0) {
+        alert("No materials selected. Please select at least one material.");
+        return null;
+    }
+
+    const lines = [columns.join(",")];
+
+    // Determine row count from the first selected renderer's data
+    const firstRnd = rnds[rndIndices[0]];
+    const nrows = firstRnd.data_source.get_length();
+
+    for (let i = 0; i < nrows; i++) {
+        const row = [];
+        for (const rndIdx of rndIndices) {
+            const rnd = rnds[rndIdx];
+            const val = rnd.data_source.data[rnd.name][i];
+            row.push(val != null && val > -1 ? val : "");
+        }
+        lines.push(row.join(","));
+    }
+    return lines.join("\n") + "\n";
 }
 
-const filename = 'data_result.csv'
-const filetext = create_source(groups, rnds)
-console.log(filetext)
-const blob = new Blob([filetext], {type: 'text/csv;charset=utf-8;'})
-
-if(navigator.msSaveBlob){
-	navigator.msSaveBlob(blob, fileName)
-} else {
-	const link = document.createElement('a')
-	link.href = URL.createObjectURL(blob)
-	link.download = filename
-	link.target = '_blank'
-	link.style.visibility = 'hidden'
-	link.dispatchEvent(new MouseEvent('click'))
+const filetext = createSelectedCsv(groups, rnds);
+if (filetext) {
+    const filename = "selected_materials.csv";
+    const blob = new Blob([filetext], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }

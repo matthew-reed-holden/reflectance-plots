@@ -1,31 +1,33 @@
+/* Download button styling */
+.bk-btn-success {
+    color: #fff;
+    background-color: #26a69a;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background-color 0.2s ease-out;
+    font-size: 13px;
+    margin: 4px 0;
+}
+.bk-btn-success:hover {
+    background-color: #2bbbad;
+}
+.bk-btn-success:active {
+    background-color: #1d7d74;
+}
 
-        .bk-root .bk-btn-success {
-            text-decoration: none;
-            color: #fff;
-            background-color: #26a69a;
-            text-align: center;
-            letter-spacing: .5px;
-            -webkit-transition: background-color .2s ease-out;
-            transition: background-color .2s ease-out;
-            cursor: pointer;
-        }
-        .bk-root .bk-btn-success:focus {
-            background-color: #1d7d74;
-        }
-        .bk-root .bk-btn-success:hover{
-            background-color: #2bbbad;
-        }
-        .bk-root .bk-btn-success:active{
-            text-decoration: none;
-            color: #fff;
-            background-color: #26a69a;
-            text-align: center;
-            letter-spacing: .5px;
-            -webkit-transition: background-color .2s ease-out;
-            transition: background-color .2s ease-out;
-            cursor: pointer;
-        }
-        .logo-img {
-            max-height: 64px!important;
-            padding: 15px 0!important;
-        }
+.bk-btn-primary {
+    color: #fff;
+    background-color: #500000;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background-color 0.2s ease-out;
+    font-size: 13px;
+    margin: 4px 0;
+}
+.bk-btn-primary:hover {
+    background-color: #700000;
+}
