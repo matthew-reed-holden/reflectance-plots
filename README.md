@@ -13,7 +13,9 @@ Interactive Bokeh application for visualizing total reflectance, specular reflec
 pip install -r requirements.txt
 ```
 
-## Running
+## Running Locally
+
+**Option 1: Bokeh Server** (interactive, with Python backend)
 
 From the **parent directory** containing the `reflectance-plots` folder:
 
@@ -22,6 +24,27 @@ bokeh serve --show reflectance-plots
 ```
 
 This launches the Bokeh server and opens the application at `http://localhost:5006/reflectance-plots`.
+
+**Option 2: Static HTML** (no server needed)
+
+```bash
+pip install jinja2
+python build.py
+```
+
+This generates `docs/index.html` -- a self-contained page you can open directly in a browser.
+
+## GitHub Pages Deployment
+
+This project can be hosted as a static site on GitHub Pages. A GitHub Actions workflow (`.github/workflows/deploy.yml`) automatically builds and deploys on every push to `master`.
+
+To enable:
+
+1. Go to your repository **Settings > Pages**
+2. Under **Source**, select **GitHub Actions**
+3. Push to `master` -- the workflow will build `docs/index.html` and deploy it
+
+The static version uses client-side JavaScript for all interactivity (no Python server required).
 
 ## Features
 
