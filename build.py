@@ -15,9 +15,9 @@ from bokeh.models import (
     ColumnDataSource, Select, MultiChoice, Div, TabPanel, Tabs,
     Button, CustomJS, CheckboxGroup, RangeSlider,
 )
-from bokeh.layouts import row, column, layout
+from bokeh.layouts import row, column
 from bokeh.resources import CDN
-from bokeh.embed import file_html
+from bokeh.embed import components
 
 import pandas as pd
 import plot_tools
@@ -62,16 +62,22 @@ white_lamb_res_ds = ColumnDataSource(
 total_fig = plot_tools.make_plot("Wavelength (nm)", "Total Reflectance (%)", "Total Reflectance vs Wavelength")
 total_fig.x_range.start = 250
 total_fig.x_range.end = 2500
-total_fig.height = 300
+total_fig.height = 380
 
 spec_fig = plot_tools.make_plot("Angle (degrees)", "Specular Reflectance", "Specular Reflectance vs Angle")
-spec_fig.height = 300
+spec_fig.height = 350
 
 lamb_fig = plot_tools.make_plot("Angle (degrees)", "Power (uW)", "Lambertian Reflectance vs Angle")
-lamb_fig.height = 350
+lamb_fig.height = 380
 
 lamb_resid_fig = plot_tools.make_plot("Angle (degrees)", "Residual", "Lambertian Residual vs Angle")
-lamb_resid_fig.height = 350
+lamb_resid_fig.height = 380
+
+# Link lambertian x-ranges so they pan/zoom together
+lamb_resid_fig.x_range = lamb_fig.x_range
+
+# Add spectral band annotations to total reflectance
+plot_tools.add_spectral_bands(total_fig)
 
 # ---------------------------------------------------------------------------
 # Palettes
@@ -137,13 +143,13 @@ spec_fig.add_layout(spec_fig_label)
 lamb_fig.add_layout(lamb_fig_label)
 lamb_resid_fig.add_layout(lamb_fig_label)
 
-total_fig.add_tools(plot_tools.make_hovertool("nm", "Wavelength (nm)", "Total Reflectance %"))
-spec_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Specular Reflectance"))
-lamb_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Lambertian Reflectance"))
+total_fig.add_tools(plot_tools.make_hovertool("nm", "nm", "Reflectance"))
+spec_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Reflectance"))
+lamb_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Power"))
 lamb_resid_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Residual"))
 
 # ---------------------------------------------------------------------------
-# Multi-choice options (deduplicated)
+# Multi-choice options
 # ---------------------------------------------------------------------------
 seen = set()
 multi_choice_options = []
@@ -153,29 +159,38 @@ for rnd in all_renderers:
         multi_choice_options.append(rnd.name)
 
 # ---------------------------------------------------------------------------
+# Stats display (updated via CustomJS)
+# ---------------------------------------------------------------------------
+stats_div = Div(
+    text="""<div style="color:#888; font-style:italic; padding:8px;">
+    Select materials to see live statistics</div>""",
+    sizing_mode="stretch_width",
+)
+
+# ---------------------------------------------------------------------------
 # Checkbox groups for selective download
 # ---------------------------------------------------------------------------
 checkbox_groups = []
 
-btk_text = Div(text="<b>Black Total Data:</b>")
+btk_text = Div(text="<b style='color:#00d2ff'>Black Total Data:</b>")
 checkbox_groups.append(CheckboxGroup(labels=black_tot_ds.column_names[1:], width=215))
 
-wtk_text = Div(text="<b>White Total Data:</b>")
+wtk_text = Div(text="<b style='color:#00d2ff'>White Total Data:</b>")
 checkbox_groups.append(CheckboxGroup(labels=white_tot_ds.column_names[1:]))
 
-bsk_text = Div(text="<b>Black Specular Data:</b>")
+bsk_text = Div(text="<b style='color:#00d2ff'>Black Specular Data:</b>")
 checkbox_groups.append(CheckboxGroup(labels=black_spec_ref_ds.column_names[1:], width=125))
 
-bsrk_text = Div(text="<b>Black Specular Ratio:</b>")
+bsrk_text = Div(text="<b style='color:#00d2ff'>Black Specular Ratio:</b>")
 checkbox_groups.append(CheckboxGroup(labels=black_spec_ratio_ds.column_names[1:], width=125))
 
-wls_text = Div(text="<b>White Lambertian Scaled:</b>")
+wls_text = Div(text="<b style='color:#00d2ff'>White Lambertian Scaled:</b>")
 checkbox_groups.append(CheckboxGroup(labels=white_lamb_scaled_ds.column_names[1:], width=125))
 
-wlss_text = Div(text="<b>White Lambertian Power:</b>")
+wlss_text = Div(text="<b style='color:#00d2ff'>White Lambertian Power:</b>")
 checkbox_groups.append(CheckboxGroup(labels=white_lamb_pow_ds.column_names[1:], width=125))
 
-wrs_text = Div(text="<b>White Lambertian Residual:</b>")
+wrs_text = Div(text="<b style='color:#00d2ff'>White Lambertian Residual:</b>")
 checkbox_groups.append(CheckboxGroup(labels=white_lamb_res_ds.column_names[1:], width=125))
 
 # ---------------------------------------------------------------------------
@@ -204,22 +219,57 @@ spec_slider = RangeSlider(start=10, end=160, value=(10, 160), step=1,
                           title="Specular Reflectance Angle Range")
 lamb_slider = RangeSlider(start=10, end=90, value=(10, 90), step=1,
                           title="Lambertian Reflectance Angle Range")
-resid_slider = RangeSlider(start=10, end=90, value=(10, 90), step=1,
-                           title="Lambertian Residual Angle Range")
 
-totb_button = Button(label="Download Black Total Reflectance", button_type="success")
-totw_button = Button(label="Download White Total Reflectance", button_type="success")
-spec_button = Button(label="Download Specular Reflectance", button_type="success")
-spec_rat_button = Button(label="Download Specular Ratio", button_type="success")
-lamb_button = Button(label="Download Lambertian Reflectance", button_type="success")
-resid_button = Button(label="Download Lambertian Residual", button_type="success")
+totb_button = Button(label="Black Total Reflectance", button_type="success")
+totw_button = Button(label="White Total Reflectance", button_type="success")
+spec_button = Button(label="Specular Reflectance", button_type="success")
+spec_rat_button = Button(label="Specular Ratio", button_type="success")
+lamb_button = Button(label="Lambertian Reflectance", button_type="success")
+resid_button = Button(label="Lambertian Residual", button_type="success")
 selec_button = Button(label="Download Selected Materials", button_type="primary")
 
 # ---------------------------------------------------------------------------
-# CustomJS callbacks (all client-side -- no Python server needed)
+# Shared JS: update statistics panel
 # ---------------------------------------------------------------------------
+UPDATE_STATS_JS = """
+function updateStats(all_renderers, stats_div) {
+    let visible_names = [];
+    let total_count = 0;
+    let black_count = 0;
+    let white_count = 0;
+    const seen = new Set();
+    for (const r of all_renderers) {
+        if (r.visible && !seen.has(r.name)) {
+            seen.add(r.name);
+            visible_names.push(r.name);
+            total_count++;
+            const tags = r.tags || [];
+            if (tags.some(t => t.startsWith('black'))) black_count++;
+            else white_count++;
+        }
+    }
+    if (total_count === 0) {
+        stats_div.text = '<div style="color:#888; font-style:italic; padding:8px;">Select materials to see live statistics</div>';
+        return;
+    }
+    const names_html = visible_names.slice(0, 12).map(n =>
+        '<span style="background:#2a2a4a; padding:2px 8px; border-radius:10px; margin:2px; display:inline-block; font-size:11px;">' + n + '</span>'
+    ).join('');
+    const more = total_count > 12 ? '<span style="color:#888; font-size:11px;"> +' + (total_count - 12) + ' more</span>' : '';
+    stats_div.text = '<div style="padding:8px;">'
+        + '<div style="display:flex; gap:20px; margin-bottom:8px;">'
+        + '<div><span style="color:#00d2ff; font-size:24px; font-weight:700;">' + total_count + '</span> <span style="color:#888; font-size:12px;">materials visible</span></div>'
+        + '<div><span style="color:#e74c3c; font-size:18px; font-weight:600;">' + black_count + '</span> <span style="color:#888; font-size:12px;">black</span></div>'
+        + '<div><span style="color:#2ecc71; font-size:18px; font-weight:600;">' + white_count + '</span> <span style="color:#888; font-size:12px;">white</span></div>'
+        + '</div>'
+        + '<div>' + names_html + more + '</div>'
+        + '</div>';
+}
+"""
 
-# --- Material color filter ---
+# ---------------------------------------------------------------------------
+# CustomJS callbacks
+# ---------------------------------------------------------------------------
 mat_color_js = CustomJS(
     args=dict(
         all_renderers=all_renderers,
@@ -229,8 +279,9 @@ mat_color_js = CustomJS(
         spec_label=spec_fig_label,
         lamb_label=lamb_fig_label,
         spec_select=spec_select,
+        stats_div=stats_div,
     ),
-    code="""
+    code=UPDATE_STATS_JS + """
     const val = cb_obj.value;
     if (val === 'Select Material') {
         for (const r of all_renderers) r.visible = false;
@@ -253,11 +304,11 @@ mat_color_js = CustomJS(
         tot_label.visible = false;
         lamb_label.visible = !is_white;
     }
+    updateStats(all_renderers, stats_div);
     """,
 )
 mat_color_select.js_on_change("value", mat_color_js)
 
-# --- Specular variable type ---
 spec_type_js = CustomJS(
     args=dict(
         ratio_renderers=black_spec_ratio_renderers,
@@ -273,7 +324,6 @@ spec_type_js = CustomJS(
 )
 spec_select.js_on_change("value", spec_type_js)
 
-# --- Multi-choice material selector ---
 multi_choice_js = CustomJS(
     args=dict(
         all_renderers=all_renderers,
@@ -284,8 +334,9 @@ multi_choice_js = CustomJS(
         tot_label=tot_fig_label,
         spec_label=spec_fig_label,
         lamb_label=lamb_fig_label,
+        stats_div=stats_div,
     ),
-    code="""
+    code=UPDATE_STATS_JS + """
     const selected = new Set(multi_choice.value);
     for (const r of all_renderers) {
         r.visible = selected.has(r.name);
@@ -297,16 +348,15 @@ multi_choice_js = CustomJS(
     tot_label.visible = noData(tot_renderers);
     spec_label.visible = noData(spec_renderers);
     lamb_label.visible = noData(lamb_renderers);
+    updateStats(all_renderers, stats_div);
     """,
 )
 multi_choice.js_on_change("value", multi_choice_js)
 
-# --- Range sliders ---
 for slider, fig_range in [
     (tot_slider, total_fig.x_range),
     (spec_slider, spec_fig.x_range),
     (lamb_slider, lamb_fig.x_range),
-    (resid_slider, lamb_resid_fig.x_range),
 ]:
     slider.js_on_change("value", CustomJS(
         args=dict(x_range=fig_range),
@@ -329,7 +379,7 @@ function dataToCsv(source) {
 const blob = new Blob([dataToCsv(source)], {type: "text/csv;charset=utf-8;"});
 const link = document.createElement("a");
 link.href = URL.createObjectURL(blob);
-link.download = "reflectance_data.csv";
+link.download = filename;
 link.style.display = "none";
 document.body.appendChild(link);
 link.click();
@@ -372,12 +422,16 @@ if (columns.length === 0) {
 }
 """
 
-totb_button.js_on_click(CustomJS(args=dict(source=black_tot_ds), code=DOWNLOAD_JS))
-totw_button.js_on_click(CustomJS(args=dict(source=white_tot_ds), code=DOWNLOAD_JS))
-spec_button.js_on_click(CustomJS(args=dict(source=black_spec_ref_ds), code=DOWNLOAD_JS))
-spec_rat_button.js_on_click(CustomJS(args=dict(source=black_spec_ratio_ds), code=DOWNLOAD_JS))
-lamb_button.js_on_click(CustomJS(args=dict(source=white_lamb_scaled_ds), code=DOWNLOAD_JS))
-resid_button.js_on_click(CustomJS(args=dict(source=white_lamb_res_ds), code=DOWNLOAD_JS))
+for btn, ds, fname in [
+    (totb_button, black_tot_ds, "black_total_reflectance.csv"),
+    (totw_button, white_tot_ds, "white_total_reflectance.csv"),
+    (spec_button, black_spec_ref_ds, "specular_reflectance.csv"),
+    (spec_rat_button, black_spec_ratio_ds, "specular_ratio.csv"),
+    (lamb_button, white_lamb_scaled_ds, "lambertian_reflectance.csv"),
+    (resid_button, white_lamb_res_ds, "lambertian_residual.csv"),
+]:
+    btn.js_on_click(CustomJS(args=dict(source=ds, filename=fname), code=DOWNLOAD_JS))
+
 selec_button.js_on_click(
     CustomJS(args=dict(groups=checkbox_groups, rnds=all_renderers), code=SELEC_DOWNLOAD_JS)
 )
@@ -386,52 +440,69 @@ selec_button.js_on_click(
 # Layout
 # ---------------------------------------------------------------------------
 instructions = Div(text="""
-<h3 style="margin-top:0">Welcome</h3>
-<p>Interactive visualization of Black and White materials reflectance data.
-Use the tabs above to filter materials, adjust axis ranges, or download data.</p>
+<div style="line-height:1.6;">
+<p style="font-size:15px; margin-top:0;">Interactive visualization of optical reflectance data for black and white materials.
+Use the tabs to filter, adjust ranges, or download data.</p>
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-top:12px;">
+  <div style="background:rgba(0,210,255,0.05); border:1px solid rgba(0,210,255,0.15); border-radius:8px; padding:12px;">
+    <div style="font-weight:600; color:#00d2ff; margin-bottom:4px;">Filters</div>
+    <div style="font-size:13px; color:#aaa;">Filter by material color or search for specific materials by name.</div>
+  </div>
+  <div style="background:rgba(46,204,113,0.05); border:1px solid rgba(46,204,113,0.15); border-radius:8px; padding:12px;">
+    <div style="font-weight:600; color:#2ecc71; margin-bottom:4px;">Range Sliders</div>
+    <div style="font-size:13px; color:#aaa;">Narrow the wavelength or angle range on each plot.</div>
+  </div>
+  <div style="background:rgba(155,89,182,0.05); border:1px solid rgba(155,89,182,0.15); border-radius:8px; padding:12px;">
+    <div style="font-weight:600; color:#9b59b6; margin-bottom:4px;">Downloads</div>
+    <div style="font-size:13px; color:#aaa;">Export full datasets or selected materials as CSV.</div>
+  </div>
+  <div style="background:rgba(231,76,60,0.05); border:1px solid rgba(231,76,60,0.15); border-radius:8px; padding:12px;">
+    <div style="font-weight:600; color:#e74c3c; margin-bottom:4px;">Plot Tools</div>
+    <div style="font-size:13px; color:#aaa;">Box zoom, pan, wheel zoom, crosshair, and hover tooltips.</div>
+  </div>
+</div>
+</div>
 """)
 
-filter_help = Div(text="""
-<details open>
-  <summary><b>Filters</b></summary>
-  <p>Use <em>Filter Material Color</em> to show black, white, or all materials.
-  Use <em>Show/Hide Materials</em> to select individual materials by name.</p>
-</details>
-<details>
-  <summary><b>Range Sliders</b></summary>
-  <p>Adjust the wavelength or angle range displayed on each plot.</p>
-</details>
-<details>
-  <summary><b>Downloads</b></summary>
-  <p>Select specific materials in the <em>Select Data</em> tab, then use the
-  <em>Downloads</em> tab to export CSV files.</p>
-</details>
-<details>
-  <summary><b>Plot Tools</b></summary>
-  <p>Each plot has a toolbar with box zoom, pan, wheel zoom, reset, and save.
-  Hover over lines to see material name and values.</p>
-</details>
-""")
+band_legend = Div(text="""
+<div style="display:flex; gap:16px; align-items:center; padding:4px 0; font-size:12px; color:#888;">
+  <span style="font-weight:600; color:#aaa;">Spectral Bands:</span>
+  <span><span style="display:inline-block;width:12px;height:12px;background:#9b59b6;border-radius:2px;opacity:0.5;vertical-align:middle;margin-right:4px;"></span>UV (250-400nm)</span>
+  <span><span style="display:inline-block;width:12px;height:12px;background:#2ecc71;border-radius:2px;opacity:0.5;vertical-align:middle;margin-right:4px;"></span>Visible (400-700nm)</span>
+  <span><span style="display:inline-block;width:12px;height:12px;background:#e74c3c;border-radius:2px;opacity:0.5;vertical-align:middle;margin-right:4px;"></span>NIR (700-2500nm)</span>
+</div>
+""", sizing_mode="stretch_width")
 
-instr_layout = column(instructions, filter_help, sizing_mode="stretch_width")
 filter_layout = row(mat_color_select, spec_select, multi_choice, sizing_mode="stretch_width")
-slider_layout = column(tot_slider, spec_slider, lamb_slider, resid_slider, sizing_mode="stretch_width")
-download_select_layout = row(
-    column(btk_text, checkbox_groups[0]),
-    column(wtk_text, checkbox_groups[1]),
-    column(bsk_text, checkbox_groups[2], bsrk_text, checkbox_groups[3]),
-    column(wls_text, checkbox_groups[4], wlss_text, checkbox_groups[5]),
-    column(wrs_text, checkbox_groups[6]),
+slider_layout = column(tot_slider, spec_slider, lamb_slider, sizing_mode="stretch_width")
+
+download_header = Div(text="<p style='color:#aaa; font-size:13px; margin:0 0 8px 0;'>Select individual materials below, then click <b>Download Selected Materials</b>.</p>")
+download_select_layout = column(
+    download_header,
+    row(
+        column(btk_text, checkbox_groups[0]),
+        column(wtk_text, checkbox_groups[1]),
+        column(bsk_text, checkbox_groups[2], bsrk_text, checkbox_groups[3]),
+        column(wls_text, checkbox_groups[4], wlss_text, checkbox_groups[5]),
+        column(wrs_text, checkbox_groups[6]),
+        sizing_mode="stretch_width",
+    ),
     sizing_mode="stretch_width",
 )
-download_buttons_layout = row(
-    column(totb_button, totw_button),
-    column(spec_button, spec_rat_button),
-    column(lamb_button, resid_button, selec_button),
+
+download_header2 = Div(text="<p style='color:#aaa; font-size:13px; margin:0 0 8px 0;'>Download complete datasets by category, or download your selected materials.</p>")
+download_buttons_layout = column(
+    download_header2,
+    row(
+        column(totb_button, totw_button),
+        column(spec_button, spec_rat_button),
+        column(lamb_button, resid_button),
+    ),
+    selec_button,
 )
 
 tabs = Tabs(tabs=[
-    TabPanel(child=instr_layout, title="Instructions"),
+    TabPanel(child=instructions, title="Overview"),
     TabPanel(child=filter_layout, title="Filters"),
     TabPanel(child=slider_layout, title="Range Sliders"),
     TabPanel(child=download_select_layout, title="Select Data"),
@@ -440,6 +511,8 @@ tabs = Tabs(tabs=[
 
 page_layout = column(
     tabs,
+    stats_div,
+    band_legend,
     total_fig,
     spec_fig,
     row(lamb_fig, lamb_resid_fig, sizing_mode="stretch_width"),
@@ -449,6 +522,156 @@ page_layout = column(
 # ---------------------------------------------------------------------------
 # Generate HTML
 # ---------------------------------------------------------------------------
+PAGE_CSS = """
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0a0a1a;
+    color:#e0e0e0;
+    min-height:100vh;
+}
+
+/* Animated gradient header */
+.hero{
+    background:linear-gradient(135deg,#500000 0%,#1a1a2e 40%,#16213e 70%,#0f3460 100%);
+    background-size:200% 200%;
+    animation:gradientShift 8s ease infinite;
+    padding:32px 24px 28px;
+    border-bottom:1px solid rgba(255,255,255,0.05);
+}
+@keyframes gradientShift{
+    0%{background-position:0% 50%}
+    50%{background-position:100% 50%}
+    100%{background-position:0% 50%}
+}
+.hero-inner{
+    max-width:1200px;margin:0 auto;
+    display:flex;align-items:center;justify-content:space-between;
+    flex-wrap:wrap;gap:16px;
+}
+.hero h1{
+    font-size:28px;font-weight:800;letter-spacing:-0.5px;
+    background:linear-gradient(135deg,#ffffff 0%,#00d2ff 100%);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    background-clip:text;
+}
+.hero .subtitle{
+    font-size:14px;color:rgba(255,255,255,0.5);margin-top:4px;
+}
+.nav-links{display:flex;gap:12px;align-items:center;}
+.nav-links a{
+    color:rgba(255,255,255,0.7);text-decoration:none;font-size:13px;
+    padding:6px 14px;border-radius:6px;
+    border:1px solid rgba(255,255,255,0.1);
+    transition:all 0.2s;
+}
+.nav-links a:hover{
+    color:#fff;border-color:rgba(0,210,255,0.4);
+    background:rgba(0,210,255,0.08);
+}
+
+/* Main container */
+.main{max-width:1200px;margin:0 auto;padding:20px 16px 60px;}
+
+/* Glass cards */
+.glass-card{
+    background:rgba(26,26,46,0.6);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,0.06);
+    border-radius:12px;
+    padding:20px;
+    margin-bottom:20px;
+    transition:border-color 0.3s;
+}
+.glass-card:hover{border-color:rgba(0,210,255,0.15);}
+
+.plot-grid{
+    display:grid;gap:20px;margin-bottom:20px;
+}
+.plot-grid.full{grid-template-columns:1fr;}
+.plot-grid.half{grid-template-columns:1fr 1fr;}
+@media(max-width:900px){.plot-grid.half{grid-template-columns:1fr;}}
+
+.plot-card{
+    background:rgba(22,33,62,0.5);
+    border:1px solid rgba(255,255,255,0.04);
+    border-radius:12px;
+    padding:12px;
+    overflow:hidden;
+    transition:transform 0.2s,border-color 0.3s;
+}
+.plot-card:hover{
+    border-color:rgba(0,210,255,0.2);
+    transform:translateY(-2px);
+}
+
+/* Section labels */
+.section-label{
+    display:flex;align-items:center;gap:8px;
+    margin-bottom:12px;font-size:11px;text-transform:uppercase;
+    letter-spacing:1.5px;color:#555577;font-weight:600;
+}
+.section-label::after{
+    content:'';flex:1;height:1px;
+    background:linear-gradient(90deg,rgba(0,210,255,0.2),transparent);
+}
+
+/* Footer */
+.footer{
+    text-align:center;padding:32px 16px;
+    color:#333355;font-size:12px;
+    border-top:1px solid rgba(255,255,255,0.03);
+}
+.footer a{color:#555577;text-decoration:none;}
+.footer a:hover{color:#00d2ff;}
+
+/* Button overrides */
+.bk-btn-success{
+    color:#fff!important;background:#26a69a!important;border:none!important;
+    border-radius:6px!important;padding:8px 18px!important;cursor:pointer;
+    transition:all 0.2s!important;font-size:13px!important;margin:4px 0!important;
+}
+.bk-btn-success:hover{background:#2bbbad!important;transform:translateY(-1px);}
+.bk-btn-primary{
+    color:#fff!important;background:linear-gradient(135deg,#500000,#0f3460)!important;
+    border:none!important;border-radius:6px!important;padding:10px 24px!important;
+    cursor:pointer;transition:all 0.2s!important;font-size:14px!important;
+    font-weight:600!important;margin:8px 0!important;
+}
+.bk-btn-primary:hover{opacity:0.9;transform:translateY(-1px);}
+
+/* Bokeh widget overrides for dark theme */
+.bk-input{
+    background:#1a1a2e!important;color:#e0e0e0!important;
+    border-color:#2a2a4a!important;border-radius:6px!important;
+}
+.bk-input:focus{border-color:#00d2ff!important;}
+select.bk-input{background:#1a1a2e!important;}
+.bk-tab{
+    background:#16213e!important;color:#888!important;
+    border:1px solid rgba(255,255,255,0.06)!important;
+    border-radius:8px 8px 0 0!important;padding:8px 16px!important;
+    transition:all 0.2s!important;
+}
+.bk-tab:hover{color:#ccc!important;}
+.bk-tab.bk-active{
+    background:#1a1a2e!important;color:#00d2ff!important;
+    border-bottom-color:#1a1a2e!important;
+}
+.bk-headers{border-bottom:1px solid rgba(255,255,255,0.06)!important;}
+.bk-slider-title{color:#aaa!important;}
+.noUi-connect{background:#00d2ff!important;}
+.noUi-handle{background:#16213e!important;border-color:#00d2ff!important;}
+label.bk{color:#ccc!important;}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-track{background:#0a0a1a;}
+::-webkit-scrollbar-thumb{background:#2a2a4a;border-radius:4px;}
+::-webkit-scrollbar-thumb:hover{background:#3a3a5a;}
+"""
+
 PAGE_TEMPLATE = """\
 <!DOCTYPE html>
 <html lang="en">
@@ -458,57 +681,33 @@ PAGE_TEMPLATE = """\
     <title>{{ title }}</title>
     {{ bokeh_css }}
     {{ bokeh_js }}
-    <style>
-        * { box-sizing: border-box; }
-        body {
-            margin: 0; padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: #f5f5f5; color: #333;
-        }
-        .top-nav {
-            background-color: #500000; color: #fff;
-            padding: 12px 24px;
-            display: flex; align-items: center; justify-content: space-between;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-        }
-        .top-nav a { color: #fff; text-decoration: none; margin-left: 20px; font-size: 14px; }
-        .top-nav a:hover { opacity: 0.8; }
-        .nav-links { display: flex; align-items: center; gap: 16px; }
-        .page-container { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
-        .page-title { font-size: 24px; font-weight: 700; margin: 0 0 20px 0; }
-        .card {
-            background: #fff; border-radius: 8px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-            padding: 16px; margin-bottom: 20px;
-        }
-        .bk-btn-success {
-            color: #fff; background-color: #26a69a; border: none;
-            border-radius: 4px; padding: 8px 16px; cursor: pointer;
-            transition: background-color 0.2s; font-size: 13px; margin: 4px 0;
-        }
-        .bk-btn-success:hover { background-color: #2bbbad; }
-        .bk-btn-primary {
-            color: #fff; background-color: #500000; border: none;
-            border-radius: 4px; padding: 8px 16px; cursor: pointer;
-            transition: background-color 0.2s; font-size: 13px; margin: 4px 0;
-        }
-        .bk-btn-primary:hover { background-color: #700000; }
-    </style>
+    <style>{{ page_css }}</style>
 </head>
 <body>
-    <nav class="top-nav">
-        <span style="font-weight:700; font-size:18px;">Texas A&amp;M Instrumentation Lab</span>
-        <div class="nav-links">
-            <a href="https://instrumentation.tamu.edu/">Lab Home</a>
-            <a href="https://github.com/matthewholden01/reflectance-plots">GitHub</a>
+    <header class="hero">
+        <div class="hero-inner">
+            <div>
+                <h1>Black &amp; White Materials Reflectance</h1>
+                <div class="subtitle">Texas A&amp;M Instrumentation Lab &mdash; Interactive Data Explorer</div>
+            </div>
+            <div class="nav-links">
+                <a href="https://instrumentation.tamu.edu/">Lab Home</a>
+                <a href="https://github.com/matthewholden01/reflectance-plots">GitHub</a>
+            </div>
         </div>
-    </nav>
-    <div class="page-container">
-        <h1 class="page-title">Black &amp; White Materials Reflectance Data</h1>
-        <div class="card">
+    </header>
+
+    <div class="main">
+        <div class="glass-card">
             {{ plot_div }}
         </div>
     </div>
+
+    <footer class="footer">
+        Texas A&amp;M University &mdash; Instrumentation Lab
+        &nbsp;&bull;&nbsp;
+        <a href="https://github.com/matthewholden01/reflectance-plots">Source Code</a>
+    </footer>
     {{ plot_script }}
 </body>
 </html>
@@ -516,18 +715,13 @@ PAGE_TEMPLATE = """\
 
 from jinja2 import Template
 
-html = file_html(page_layout, resources=CDN, title="B/W Materials Reflectance Data")
-
-# Wrap the Bokeh output in our custom page template.
-# file_html produces a full page; we extract the components and re-template.
-from bokeh.embed import components
-
 script, div = components(page_layout)
 template = Template(PAGE_TEMPLATE)
 final_html = template.render(
     title="B/W Materials Reflectance Data",
     bokeh_css=CDN.render_css(),
     bokeh_js=CDN.render_js(),
+    page_css=PAGE_CSS,
     plot_div=div,
     plot_script=script,
 )
