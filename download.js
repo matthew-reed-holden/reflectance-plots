@@ -1,32 +1,25 @@
-function data_to_csv(source){
-	const columns = Object.keys(source.data)
-	const nrows = source.get_length()
-	const lines = [columns.join(',')]
+function dataToCsv(source) {
+    const columns = Object.keys(source.data);
+    const nrows = source.get_length();
+    const lines = [columns.join(",")];
 
-	for(let i = 0; i < nrows; i++){
-		let row = [];
-		for(let j = 0; j < columns.length; j++){
-			const column = columns[j]
-			row.push(source.data[column][i].toString())
-			console.log(row)
-		}
-		lines.push(row.join(','))
-	}
-	return lines.join('\n').concat('\n')
+    for (let i = 0; i < nrows; i++) {
+        const row = [];
+        for (const col of columns) {
+            row.push(source.data[col][i]);
+        }
+        lines.push(row.join(","));
+    }
+    return lines.join("\n") + "\n";
 }
 
-const filename = 'data_result.csv'
-const filetext = data_to_csv(source)
-console.log(filetext)
-const blob = new Blob([filetext], {type: 'text/csv;charset=utf-8;'})
-
-if(navigator.msSaveBlob){
-	navigator.msSaveBlob(blob, fileName)
-} else {
-	const link = document.createElement('a')
-	link.href = URL.createObjectURL(blob)
-	link.download = filename
-	link.target = '_blank'
-	link.style.visibility = 'hidden'
-	link.dispatchEvent(new MouseEvent('click'))
-}
+const filename = "reflectance_data.csv";
+const filetext = dataToCsv(source);
+const blob = new Blob([filetext], { type: "text/csv;charset=utf-8;" });
+const link = document.createElement("a");
+link.href = URL.createObjectURL(blob);
+link.download = filename;
+link.style.display = "none";
+document.body.appendChild(link);
+link.click();
+document.body.removeChild(link);
