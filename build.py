@@ -14,6 +14,7 @@ from bokeh.palettes import Turbo256, Category10_10
 from bokeh.models import (
     ColumnDataSource, Select, MultiChoice, Div, TabPanel, Tabs,
     Button, CustomJS, CheckboxGroup, RangeSlider,
+    DataTable, TableColumn, NumberFormatter, StringFormatter,
 )
 from bokeh.layouts import row, column
 from bokeh.resources import CDN
@@ -143,7 +144,34 @@ spec_fig.add_layout(spec_fig_label)
 lamb_fig.add_layout(lamb_fig_label)
 lamb_resid_fig.add_layout(lamb_fig_label)
 
-total_fig.add_tools(plot_tools.make_hovertool("nm", "nm", "Reflectance"))
+# Hover-highlight: thicken hovered line, dim others
+hover_highlight_js = CustomJS(
+    args=dict(renderers=black_tot_renderers + white_tot_renderers),
+    code="""
+    const indices = cb_data.index.indices;
+    if (indices.length === 0) {
+        for (const r of renderers) {
+            r.glyph.line_width = 1.5;
+            r.glyph.line_alpha = 0.9;
+        }
+        return;
+    }
+    const hovered_name = cb_data.renderer.name;
+    for (const r of renderers) {
+        if (r.name === hovered_name) {
+            r.glyph.line_width = 3.5;
+            r.glyph.line_alpha = 1.0;
+        } else {
+            r.glyph.line_width = 0.8;
+            r.glyph.line_alpha = 0.3;
+        }
+    }
+    """,
+)
+
+total_hover = plot_tools.make_hovertool("nm", "nm", "Reflectance")
+total_hover.callback = hover_highlight_js
+total_fig.add_tools(total_hover)
 spec_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Reflectance"))
 lamb_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Power"))
 lamb_resid_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Residual"))
@@ -220,6 +248,42 @@ spec_slider = RangeSlider(start=10, end=160, value=(10, 160), step=1,
 lamb_slider = RangeSlider(start=10, end=90, value=(10, 90), step=1,
                           title="Lambertian Reflectance Angle Range")
 
+# Quick wavelength zoom buttons
+uv_btn = Button(label="UV (250-400nm)", button_type="light", width=140)
+vis_btn = Button(label="Visible (400-700nm)", button_type="light", width=160)
+nir_btn = Button(label="NIR (700-2500nm)", button_type="light", width=160)
+full_btn = Button(label="Full Range", button_type="light", width=120)
+
+for btn, lo, hi in [(uv_btn, 250, 400), (vis_btn, 400, 700), (nir_btn, 700, 2500), (full_btn, 250, 2500)]:
+    btn.js_on_click(CustomJS(
+        args=dict(x_range=total_fig.x_range, slider=tot_slider, lo=lo, hi=hi),
+        code="x_range.start = lo; x_range.end = hi; slider.value = [lo, hi];",
+    ))
+
+# Data summary table (populated via CustomJS)
+table_source = ColumnDataSource(data=dict(
+    name=[], category=[], min_val=[], max_val=[], mean_val=[],
+))
+
+summary_table = DataTable(
+    source=table_source,
+    columns=[
+        TableColumn(field="name", title="Material", width=150,
+                    formatter=StringFormatter(font_style="bold")),
+        TableColumn(field="category", title="Type", width=80),
+        TableColumn(field="min_val", title="Min", width=90,
+                    formatter=NumberFormatter(format="0.4f")),
+        TableColumn(field="max_val", title="Max", width=90,
+                    formatter=NumberFormatter(format="0.4f")),
+        TableColumn(field="mean_val", title="Mean", width=90,
+                    formatter=NumberFormatter(format="0.4f")),
+    ],
+    width=550,
+    height=200,
+    index_position=None,
+    sizing_mode="stretch_width",
+)
+
 totb_button = Button(label="Black Total Reflectance", button_type="success")
 totw_button = Button(label="White Total Reflectance", button_type="success")
 spec_button = Button(label="Specular Reflectance", button_type="success")
@@ -232,6 +296,41 @@ selec_button = Button(label="Download Selected Materials", button_type="primary"
 # Shared JS: update statistics panel
 # ---------------------------------------------------------------------------
 UPDATE_STATS_JS = """
+function updateTable(all_renderers, table_source) {
+    const names = [];
+    const categories = [];
+    const mins = [];
+    const maxs = [];
+    const means = [];
+    const seen = new Set();
+    for (const r of all_renderers) {
+        if (r.visible && !seen.has(r.name)) {
+            seen.add(r.name);
+            const data = r.data_source.data[r.name];
+            if (!data) continue;
+            let mn = Infinity, mx = -Infinity, sum = 0, cnt = 0;
+            for (let i = 0; i < data.length; i++) {
+                const v = data[i];
+                if (v != null && isFinite(v)) {
+                    if (v < mn) mn = v;
+                    if (v > mx) mx = v;
+                    sum += v;
+                    cnt++;
+                }
+            }
+            if (cnt > 0) {
+                names.push(r.name);
+                const tags = r.tags || [];
+                categories.push(tags.some(t => t.startsWith('black')) ? 'Black' : 'White');
+                mins.push(mn);
+                maxs.push(mx);
+                means.push(sum / cnt);
+            }
+        }
+    }
+    table_source.data = {name: names, category: categories, min_val: mins, max_val: maxs, mean_val: means};
+    table_source.change.emit();
+}
 function updateStats(all_renderers, stats_div) {
     let visible_names = [];
     let total_count = 0;
@@ -280,6 +379,7 @@ mat_color_js = CustomJS(
         lamb_label=lamb_fig_label,
         spec_select=spec_select,
         stats_div=stats_div,
+        table_source=table_source,
     ),
     code=UPDATE_STATS_JS + """
     const val = cb_obj.value;
@@ -305,6 +405,7 @@ mat_color_js = CustomJS(
         lamb_label.visible = !is_white;
     }
     updateStats(all_renderers, stats_div);
+    updateTable(all_renderers, table_source);
     """,
 )
 mat_color_select.js_on_change("value", mat_color_js)
@@ -335,6 +436,7 @@ multi_choice_js = CustomJS(
         spec_label=spec_fig_label,
         lamb_label=lamb_fig_label,
         stats_div=stats_div,
+        table_source=table_source,
     ),
     code=UPDATE_STATS_JS + """
     const selected = new Set(multi_choice.value);
@@ -349,6 +451,7 @@ multi_choice_js = CustomJS(
     spec_label.visible = noData(spec_renderers);
     lamb_label.visible = noData(lamb_renderers);
     updateStats(all_renderers, stats_div);
+    updateTable(all_renderers, table_source);
     """,
 )
 multi_choice.js_on_change("value", multi_choice_js)
@@ -474,7 +577,10 @@ band_legend = Div(text="""
 """, sizing_mode="stretch_width")
 
 filter_layout = row(mat_color_select, spec_select, multi_choice, sizing_mode="stretch_width")
-slider_layout = column(tot_slider, spec_slider, lamb_slider, sizing_mode="stretch_width")
+
+quick_zoom_label = Div(text="<span style='color:#aaa; font-size:12px; font-weight:600;'>Quick Zoom:</span>", width=90)
+quick_zoom_row = row(quick_zoom_label, uv_btn, vis_btn, nir_btn, full_btn, sizing_mode="stretch_width")
+slider_layout = column(quick_zoom_row, tot_slider, spec_slider, lamb_slider, sizing_mode="stretch_width")
 
 download_header = Div(text="<p style='color:#aaa; font-size:13px; margin:0 0 8px 0;'>Select individual materials below, then click <b>Download Selected Materials</b>.</p>")
 download_select_layout = column(
@@ -509,9 +615,15 @@ tabs = Tabs(tabs=[
     TabPanel(child=download_buttons_layout, title="Downloads"),
 ], active=0)
 
+table_label = Div(text="<div style='color:#555577; font-size:11px; text-transform:uppercase; letter-spacing:1.5px; font-weight:600; margin-bottom:4px;'>Material Statistics (visible materials)</div>")
+
 page_layout = column(
     tabs,
-    stats_div,
+    row(
+        column(stats_div, sizing_mode="stretch_width"),
+        column(table_label, summary_table, sizing_mode="stretch_width"),
+        sizing_mode="stretch_width",
+    ),
     band_legend,
     total_fig,
     spec_fig,
@@ -664,6 +776,32 @@ select.bk-input{background:#1a1a2e!important;}
 .noUi-connect{background:#00d2ff!important;}
 .noUi-handle{background:#16213e!important;border-color:#00d2ff!important;}
 label.bk{color:#ccc!important;}
+
+/* Quick zoom buttons */
+.bk-btn-light{
+    color:#aaa!important;background:rgba(42,42,74,0.6)!important;
+    border:1px solid rgba(255,255,255,0.1)!important;
+    border-radius:6px!important;padding:5px 12px!important;
+    font-size:12px!important;cursor:pointer;transition:all 0.2s!important;
+    margin:2px!important;
+}
+.bk-btn-light:hover{
+    color:#00d2ff!important;border-color:rgba(0,210,255,0.4)!important;
+    background:rgba(0,210,255,0.08)!important;
+}
+
+/* DataTable dark theme */
+.bk-data-table{background:#1a1a2e!important;border:none!important;}
+.bk-data-table .slick-header-columns{
+    background:#16213e!important;border-bottom:1px solid #2a2a4a!important;
+}
+.bk-data-table .slick-header-column{
+    color:#aaa!important;font-size:12px!important;border-right:1px solid #2a2a4a!important;
+}
+.bk-data-table .slick-row{background:#1a1a2e!important;border-bottom:1px solid rgba(255,255,255,0.03)!important;}
+.bk-data-table .slick-row:hover{background:#16213e!important;}
+.bk-data-table .slick-row.odd{background:rgba(22,33,62,0.3)!important;}
+.bk-data-table .slick-cell{color:#ccc!important;font-size:12px!important;border-right:1px solid rgba(255,255,255,0.03)!important;}
 
 /* Scrollbar */
 ::-webkit-scrollbar{width:8px;height:8px;}

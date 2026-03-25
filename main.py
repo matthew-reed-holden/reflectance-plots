@@ -12,6 +12,7 @@ from bokeh.palettes import Turbo256, Category10_10
 from bokeh.models import (
     ColumnDataSource, Select, MultiChoice, Div, TabPanel, Tabs,
     Button, CustomJS, CheckboxGroup, RangeSlider,
+    DataTable, TableColumn, NumberFormatter, StringFormatter,
 )
 from bokeh.layouts import row, column
 from bokeh.io import curdoc
@@ -152,7 +153,24 @@ spec_fig.add_layout(spec_fig_label)
 lamb_fig.add_layout(lamb_fig_label)
 lamb_resid_fig.add_layout(lamb_fig_label)
 
-total_fig.add_tools(plot_tools.make_hovertool("nm", "nm", "Reflectance"))
+# Hover-highlight on total reflectance
+total_hover = plot_tools.make_hovertool("nm", "nm", "Reflectance")
+total_hover.callback = CustomJS(
+    args=dict(renderers=black_tot_renderers + white_tot_renderers),
+    code="""
+    const indices = cb_data.index.indices;
+    if (indices.length === 0) {
+        for (const r of renderers) { r.glyph.line_width = 1.5; r.glyph.line_alpha = 0.9; }
+        return;
+    }
+    const hovered_name = cb_data.renderer.name;
+    for (const r of renderers) {
+        if (r.name === hovered_name) { r.glyph.line_width = 3.5; r.glyph.line_alpha = 1.0; }
+        else { r.glyph.line_width = 0.8; r.glyph.line_alpha = 0.3; }
+    }
+    """,
+)
+total_fig.add_tools(total_hover)
 spec_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Reflectance"))
 lamb_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Power"))
 lamb_resid_fig.add_tools(plot_tools.make_hovertool("{Angle (Deg)}", "Angle", "Residual"))
@@ -213,6 +231,39 @@ spec_slider = RangeSlider(start=10, end=160, value=(10, 160), step=1,
 lamb_slider = RangeSlider(start=10, end=90, value=(10, 90), step=1,
                           title="Lambertian Reflectance Angle Range")
 
+# Quick wavelength zoom buttons
+uv_btn = Button(label="UV (250-400nm)", button_type="light", width=140)
+vis_btn = Button(label="Visible (400-700nm)", button_type="light", width=160)
+nir_btn = Button(label="NIR (700-2500nm)", button_type="light", width=160)
+full_btn = Button(label="Full Range", button_type="light", width=120)
+
+for btn, lo, hi in [(uv_btn, 250, 400), (vis_btn, 400, 700), (nir_btn, 700, 2500), (full_btn, 250, 2500)]:
+    btn.js_on_click(CustomJS(
+        args=dict(x_range=total_fig.x_range, slider=tot_slider, lo=lo, hi=hi),
+        code="x_range.start = lo; x_range.end = hi; slider.value = [lo, hi];",
+    ))
+
+# Data summary table
+table_source = ColumnDataSource(data=dict(
+    name=[], category=[], min_val=[], max_val=[], mean_val=[],
+))
+summary_table = DataTable(
+    source=table_source,
+    columns=[
+        TableColumn(field="name", title="Material", width=150,
+                    formatter=StringFormatter(font_style="bold")),
+        TableColumn(field="category", title="Type", width=80),
+        TableColumn(field="min_val", title="Min", width=90,
+                    formatter=NumberFormatter(format="0.4f")),
+        TableColumn(field="max_val", title="Max", width=90,
+                    formatter=NumberFormatter(format="0.4f")),
+        TableColumn(field="mean_val", title="Mean", width=90,
+                    formatter=NumberFormatter(format="0.4f")),
+    ],
+    width=550, height=200, index_position=None,
+    sizing_mode="stretch_width", name="summary_table",
+)
+
 totb_button = Button(label="Black Total Reflectance", button_type="success")
 totw_button = Button(label="White Total Reflectance", button_type="success")
 spec_button = Button(label="Specular Reflectance", button_type="success")
@@ -225,18 +276,31 @@ selec_button = Button(label="Download Selected Materials", button_type="primary"
 # Python callbacks
 # ---------------------------------------------------------------------------
 def _update_stats():
+    import math
     visible = []
     black_n = white_n = 0
     seen_names = set()
+    names_list, cats, mins, maxs, means = [], [], [], [], []
     for r in all_renderers:
         if r.visible and r.name not in seen_names:
             seen_names.add(r.name)
             visible.append(r.name)
             tags = r.tags or []
-            if any(t.startswith("black") for t in tags):
+            is_black = any(t.startswith("black") for t in tags)
+            if is_black:
                 black_n += 1
             else:
                 white_n += 1
+            # Compute stats from data source
+            data = r.data_source.data.get(r.name, [])
+            vals = [v for v in data if v is not None and math.isfinite(v)]
+            if vals:
+                names_list.append(r.name)
+                cats.append("Black" if is_black else "White")
+                mins.append(min(vals))
+                maxs.append(max(vals))
+                means.append(sum(vals) / len(vals))
+    table_source.data = dict(name=names_list, category=cats, min_val=mins, max_val=maxs, mean_val=means)
     total = len(visible)
     if total == 0:
         stats_div.text = '<div style="color:#888; font-style:italic; padding:8px;">Select materials to see live statistics</div>'
@@ -376,7 +440,8 @@ band_legend = Div(text="""
 """, name="band_legend", sizing_mode="stretch_width")
 
 filter_layout = row(mat_color_select, spec_select, multi_choice, sizing_mode="stretch_width")
-slider_layout = column(tot_slider, spec_slider, lamb_slider, sizing_mode="stretch_width")
+quick_zoom_row = row(uv_btn, vis_btn, nir_btn, full_btn, sizing_mode="stretch_width")
+slider_layout = column(tot_slider, quick_zoom_row, spec_slider, lamb_slider, sizing_mode="stretch_width")
 download_select_layout = row(
     column(btk_text, checkbox_groups[0]),
     column(wtk_text, checkbox_groups[1]),
@@ -402,8 +467,14 @@ tabs = Tabs(tabs=[
 # ---------------------------------------------------------------------------
 # Document
 # ---------------------------------------------------------------------------
+table_label = Div(
+    text='<div style="font-weight:600; color:#00d2ff; font-size:13px; margin-bottom:4px;">Material Statistics</div>',
+    sizing_mode="stretch_width",
+)
+
 curdoc().add_root(tabs)
 curdoc().add_root(stats_div)
+curdoc().add_root(column(table_label, summary_table, sizing_mode="stretch_width", name="summary_table"))
 curdoc().add_root(band_legend)
 curdoc().add_root(total_fig)
 curdoc().add_root(spec_fig)

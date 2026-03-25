@@ -154,7 +154,10 @@
         </div>
 
         <div class="glass-card" style="padding:8px 20px;">
-            {{ embed(roots.stats) }}
+            <div style="display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap;">
+                <div style="flex:1; min-width:300px;">{{ embed(roots.stats) }}</div>
+                <div style="flex:1; min-width:300px;">{{ embed(roots.summary_table) }}</div>
+            </div>
         </div>
 
         <div class="glass-card" style="padding:8px 20px;">
